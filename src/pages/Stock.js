@@ -11,28 +11,30 @@ export default function Stock({ onLogout }) {
   const [form, setForm] = useState({});
   const [loading, setLoading] = useState(true);
   
-  // State untuk update stock
   const [stockModal, setStockModal] = useState({ show: false, item: null, parentId: null });
-  const [stockForm, setStockForm] = useState({ mode: 'set', value: '', dikirimUntuk: '' }); // mode: 'set', 'add', 'subtract'
+  const [stockForm, setStockForm] = useState({ mode: 'set', value: '', keterangan: '' });
   
-  // State untuk history
   const [historyModal, setHistoryModal] = useState({ show: false, history: [], selectedMonth: '' });
   const [monthlyStats, setMonthlyStats] = useState({ startStock: 0, endStock: 0 });
+  
+  const [searchQuery, setSearchQuery] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 3;
 
-  // Real-time listener untuk Kaca
   useEffect(() => {
     const unsubscribe = onSnapshot(collection(db, 'kaca'), (snapshot) => {
       const kacaData = snapshot.docs.map(doc => ({
         id: doc.id,
+        createdAt: doc.data().createdAt || Date.now(),
         ...doc.data()
       }));
+      kacaData.sort((a, b) => a.createdAt - b.createdAt);
       setKaca(kacaData);
       setLoading(false);
     });
     return () => unsubscribe();
   }, []);
 
-  // Real-time listener untuk Frame
   useEffect(() => {
     const unsubscribe = onSnapshot(collection(db, 'frame'), (snapshot) => {
       const frameData = snapshot.docs.map(doc => ({
@@ -54,7 +56,6 @@ export default function Stock({ onLogout }) {
   const openModal = (type, item = null, parent = null) => {
     setModal({ show: true, type, item, parent });
     if (type === 'ukuran' && item) {
-      // Split ukuran menjadi panjang x lebar
       const [p, l] = (item.ukuran || '').split('x');
       setForm({ ...item, panjang: p || '', lebar: l || '' });
     } else {
@@ -67,18 +68,16 @@ export default function Stock({ onLogout }) {
     setForm({});
   };
 
-  // Open Stock Update Modal
   const openStockModal = (ukuran, parentId) => {
     setStockModal({ show: true, item: ukuran, parentId });
-    setStockForm({ mode: 'set', value: '', dikirimUntuk: '' });
+    setStockForm({ mode: 'set', value: '', keterangan: '' });
   };
 
   const closeStockModal = () => {
     setStockModal({ show: false, item: null, parentId: null });
-    setStockForm({ mode: 'set', value: '', dikirimUntuk: '' });
+    setStockForm({ mode: 'set', value: '', keterangan: '' });
   };
 
-  // Update Stock dengan History
   const handleUpdateStock = async () => {
     try {
       const value = Number(stockForm.value);
@@ -104,14 +103,15 @@ export default function Stock({ onLogout }) {
         change = -value;
       }
 
-      // Create history entry
       const historyEntry = {
         timestamp: new Date().toISOString(),
         oldStock,
         newStock,
         change,
         mode: stockForm.mode,
-        dikirimUntuk: stockForm.dikirimUntuk || ''
+        keterangan: stockForm.keterangan || '',
+        // Simpan label untuk history
+        keteranganLabel: change < 0 ? 'Dikirim Untuk' : 'Dapat Dari'
       };
 
       const updatedUkuran = jenisDoc.ukuran.map(u => {
@@ -136,11 +136,9 @@ export default function Stock({ onLogout }) {
     }
   };
 
-  // Show History Modal
   const showHistory = (ukuran) => {
     const history = ukuran.history || [];
     
-    // Get unique months from history
     const months = [...new Set(history.map(h => {
       const date = new Date(h.timestamp);
       return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
@@ -159,7 +157,6 @@ export default function Stock({ onLogout }) {
       availableMonths: months
     });
     
-    // Calculate monthly stats for current month
     if (currentMonth) {
       calculateMonthlyStats(history, currentMonth);
     }
@@ -170,13 +167,11 @@ export default function Stock({ onLogout }) {
     const startDate = new Date(year, monthNum - 1, 1);
     const endDate = new Date(year, monthNum, 0, 23, 59, 59);
     
-    // Filter history for selected month
     const monthHistory = allHistory.filter(h => {
       const date = new Date(h.timestamp);
       return date >= startDate && date <= endDate;
     }).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
     
-    // Get stock at start and end of month
     const startStock = monthHistory.length > 0 ? monthHistory[0].oldStock : 0;
     const endStock = monthHistory.length > 0 ? monthHistory[monthHistory.length - 1].newStock : startStock;
     
@@ -203,7 +198,6 @@ export default function Stock({ onLogout }) {
     setMonthlyStats({ startStock: 0, endStock: 0, totalChanges: 0 });
   };
 
-  // Format timestamp
   const formatDate = (isoString) => {
     const date = new Date(isoString);
     return date.toLocaleString('id-ID', {
@@ -215,14 +209,12 @@ export default function Stock({ onLogout }) {
     });
   };
 
-  // Format month name
   const formatMonthName = (monthStr) => {
     const [year, month] = monthStr.split('-');
     const date = new Date(year, month - 1);
     return date.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
   };
 
-  // CRUD Jenis Kaca
   const saveJenis = async () => {
     try {
       if (modal.item) {
@@ -232,7 +224,8 @@ export default function Stock({ onLogout }) {
       } else {
         await addDoc(collection(db, 'kaca'), {
           namaJenis: form.namaJenis,
-          ukuran: []
+          ukuran: [],
+          createdAt: Date.now()
         });
       }
       closeModal();
@@ -253,12 +246,9 @@ export default function Stock({ onLogout }) {
     }
   };
 
-  // CRUD Ukuran Kaca
   const saveUkuran = async () => {
     try {
       const jenisDoc = kaca.find(k => k.id === modal.parent);
-      
-      // Gabungkan panjang x lebar
       const ukuranFormatted = `${form.panjang}x${form.lebar}`;
       
       const ukuranData = {
@@ -266,7 +256,7 @@ export default function Stock({ onLogout }) {
         ukuran: ukuranFormatted,
         kode: form.kode || '',
         harga: Number(form.harga) || 0,
-        stock: modal.item ? modal.item.stock : 0, // Jangan ubah stock saat edit
+        stock: modal.item ? modal.item.stock : 0,
         history: modal.item ? modal.item.history || [] : []
       };
 
@@ -304,7 +294,6 @@ export default function Stock({ onLogout }) {
     }
   };
 
-  // CRUD Frame
   const saveFrame = async () => {
     try {
       if (modal.item) {
@@ -335,7 +324,6 @@ export default function Stock({ onLogout }) {
     }
   };
 
-  // CRUD Daun Frame
   const saveDaun = async () => {
     try {
       const frameDoc = frame.find(f => f.id === modal.parent);
@@ -388,6 +376,19 @@ export default function Stock({ onLogout }) {
     else if (modal.type === 'daun') saveDaun();
   };
 
+  const filteredKaca = kaca.filter(k => 
+    k.namaJenis.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const totalPages = Math.ceil(filteredKaca.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const currentKaca = filteredKaca.slice(startIndex, endIndex);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery]);
+
   if (loading) {
     return (
       <div className="vh-100 d-flex align-items-center justify-content-center">
@@ -419,104 +420,177 @@ export default function Stock({ onLogout }) {
           </li>
         </ul>
 
-        <button className="btn btn-dark  mb-3" onClick={() => openModal(tab === 'kaca' ? 'jenis' : 'frame')}>
+        <button className="btn btn-dark mb-3" onClick={() => openModal(tab === 'kaca' ? 'jenis' : 'frame')}>
           <Plus size={16} /> Tambah {tab === 'kaca' ? 'Jenis' : 'Frame'}
         </button>
 
         {tab === 'kaca' && (
-          <div className="row">
-            {kaca.length === 0 ? (
-              <div className="col-12 text-center py-5">
-                <p className="text-muted">Belum ada data kaca. Klik tombol "Tambah Jenis" untuk mulai.</p>
+          <>
+            <div className="row mb-3">
+              <div className="col-md-6">
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="🔍 Cari jenis kaca..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
               </div>
-            ) : (
-              kaca.map(k => (
-                <div key={k.id} className="col-md-6 col-lg-4 mb-3">
-                  <div className="card">
-                    <div className="card-header bg-dark text-white d-flex justify-content-between">
-                      <span>{k.namaJenis}</span>
-                      <div>
-                        <button className="btn btn-sm btn-light me-1" onClick={() => openModal('jenis', k)}>
-                          <Edit2 size={14} />
+              <div className="col-md-6 text-end">
+                <small className="text-muted">
+                  Menampilkan {currentKaca.length} dari {filteredKaca.length} jenis kaca
+                </small>
+              </div>
+            </div>
+
+            <div className="row">
+              {currentKaca.length === 0 ? (
+                <div className="col-12 text-center py-5">
+                  <p className="text-muted">
+                    {searchQuery 
+                      ? `Tidak ada hasil untuk "${searchQuery}"`
+                      : 'Belum ada data kaca. Klik tombol "Tambah Jenis" untuk mulai.'
+                    }
+                  </p>
+                </div>
+              ) : (
+                currentKaca.map(k => (
+                  <div key={k.id} className="col-lg-4 mb-4">
+                    <div className="card h-100 shadow-sm">
+                      <div className="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+                        <span className="fw-bold">{k.namaJenis}</span>
+                        <div>
+                          <button className="btn btn-sm btn-light me-1" onClick={() => openModal('jenis', k)}>
+                            <Edit2 size={14} />
+                          </button>
+                          <button className="btn btn-sm btn-danger" onClick={() => deleteJenis(k.id)}>
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="card-body">
+                        <button className="btn btn-sm btn-outline-dark mb-3 w-100" onClick={() => openModal('ukuran', null, k.id)}>
+                          <Plus size={14} /> Tambah Ukuran
                         </button>
-                        <button className="btn btn-sm btn-danger" onClick={() => deleteJenis(k.id)}>
-                          <Trash2 size={14} />
-                        </button>
+                        {(!k.ukuran || k.ukuran.length === 0) ? (
+                          <p className="text-muted text-center py-3">Belum ada ukuran</p>
+                        ) : (
+                          <div className="table-responsive">
+                            <table className="table table-sm table-hover mb-0">
+                              <thead className="table-light">
+                                <tr>
+                                  <th>Ukuran</th>
+                                  <th>Kode</th>
+                                  <th className="text-end">Harga</th>
+                                  <th className="text-center">Stock</th>
+                                  <th className="text-center">Aksi</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {k.ukuran.map(u => (
+                                  <tr key={u.id}>
+                                    <td><strong className="text-dark">{u.ukuran}</strong></td>
+                                    <td><span className="badge bg-secondary">{u.kode}</span></td>
+                                    <td className="text-end"><small>Rp {u.harga.toLocaleString()}</small></td>
+                                    <td className="text-center">
+                                      <span className="fw-semibold">
+                                        {u.stock}
+                                      </span>
+                                    </td>
+                                    <td>
+                                      <div className="btn-group btn-group-sm" role="group">
+                                        <button 
+                                          className="btn btn-success" 
+                                          onClick={() => openStockModal(u, k.id)}
+                                          title="Update Stock"
+                                        >
+                                          <Package size={12} />
+                                        </button>
+                                        <button 
+                                          className="btn btn-warning" 
+                                          onClick={() => openModal('ukuran', u, k.id)}
+                                          title="Edit Data"
+                                        >
+                                          <Edit2 size={12} />
+                                        </button>
+                                        <button 
+                                          className="btn btn-info text-white" 
+                                          onClick={() => showHistory(u)}
+                                          title="Lihat History"
+                                        >
+                                          <History size={12} />
+                                        </button>
+                                        <button 
+                                          className="btn btn-danger" 
+                                          onClick={() => deleteUkuran(k.id, u.id)}
+                                          title="Hapus"
+                                        >
+                                          <Trash2 size={12} />
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
                       </div>
                     </div>
-                    <div className="card-body">
-                      <button className="btn btn-sm btn-outline-dark mb-2 w-100" onClick={() => openModal('ukuran', null, k.id)}>
-                        + Tambah Ukuran
-                      </button>
-                      {(!k.ukuran || k.ukuran.length === 0) ? (
-                        <p className="text-muted text-center">Belum ada ukuran</p>
-                      ) : (
-                        <div className="table-responsive">
-                          <table className="table table-sm table-hover">
-                            <thead>
-                              <tr>
-                                <th>Ukuran</th>
-                                <th>Kode</th>
-                                <th>Harga</th>
-                                <th>Stock</th>
-                                <th>Aksi</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {k.ukuran.map(u => (
-                                <tr key={u.id}>
-                                  <td><strong>{u.ukuran}</strong></td>
-                                  <td><span className="badge bg-secondary">{u.kode}</span></td>
-                                  <td>Rp {u.harga.toLocaleString()}</td>
-                                  <td>
-                                    <span className={`badge ${u.stock <= 10 ? 'bg-danger' : 'bg-success'}`}>
-                                      {u.stock}
-                                    </span>
-                                  </td>
-                                  <td>
-                                    <div className="btn-group btn-group-sm" role="group">
-                                      <button 
-                                        className="btn btn-success" 
-                                        onClick={() => openStockModal(u, k.id)}
-                                        title="Update Stock"
-                                      >
-                                        <Package size={12} />
-                                      </button>
-                                      <button 
-                                        className="btn btn-warning" 
-                                        onClick={() => openModal('ukuran', u, k.id)}
-                                        title="Edit Data"
-                                      >
-                                        <Edit2 size={12} />
-                                      </button>
-                                      <button 
-                                        className="btn btn-info text-white" 
-                                        onClick={() => showHistory(u)}
-                                        title="Lihat History"
-                                      >
-                                        <History size={12} />
-                                      </button>
-                                      <button 
-                                        className="btn btn-danger" 
-                                        onClick={() => deleteUkuran(k.id, u.id)}
-                                        title="Hapus"
-                                      >
-                                        <Trash2 size={12} />
-                                      </button>
-                                    </div>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </div>
                   </div>
-                </div>
-              ))
+                ))
+              )}
+            </div>
+
+            {totalPages > 1 && (
+              <nav className="mt-4">
+                <ul className="pagination justify-content-center">
+                  <li className={`page-item ${currentPage === 1 ? 'disabled' : ''}`}>
+                    <button 
+                      className="page-link" 
+                      onClick={() => setCurrentPage(currentPage - 1)}
+                      disabled={currentPage === 1}
+                    >
+                      ← Previous
+                    </button>
+                  </li>
+                  
+                  {[...Array(totalPages)].map((_, index) => {
+                    const pageNum = index + 1;
+                    if (
+                      pageNum === 1 || 
+                      pageNum === totalPages || 
+                      (pageNum >= currentPage - 1 && pageNum <= currentPage + 1)
+                    ) {
+                      return (
+                        <li key={pageNum} className={`page-item ${currentPage === pageNum ? 'active' : ''}`}>
+                          <button 
+                            className="page-link" 
+                            onClick={() => setCurrentPage(pageNum)}
+                          >
+                            {pageNum}
+                          </button>
+                        </li>
+                      );
+                    } else if (pageNum === currentPage - 2 || pageNum === currentPage + 2) {
+                      return <li key={pageNum} className="page-item disabled"><span className="page-link">...</span></li>;
+                    }
+                    return null;
+                  })}
+                  
+                  <li className={`page-item ${currentPage === totalPages ? 'disabled' : ''}`}>
+                    <button 
+                      className="page-link" 
+                      onClick={() => setCurrentPage(currentPage + 1)}
+                      disabled={currentPage === totalPages}
+                    >
+                      Next →
+                    </button>
+                  </li>
+                </ul>
+              </nav>
             )}
-          </div>
+          </>
         )}
 
         {tab === 'frame' && (
@@ -586,7 +660,6 @@ export default function Stock({ onLogout }) {
         )}
       </div>
 
-      {/* Modal Edit Data (Jenis, Ukuran, Frame, Daun) */}
       {modal.show && (
         <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
           <div className="modal-dialog">
@@ -602,7 +675,6 @@ export default function Stock({ onLogout }) {
                     placeholder="Nama Jenis *" 
                     value={form.namaJenis || ''} 
                     onChange={(e) => setForm({ ...form, namaJenis: e.target.value })}
-                    required
                   />
                 )}
                 {modal.type === 'ukuran' && (
@@ -652,7 +724,6 @@ export default function Stock({ onLogout }) {
                     placeholder="Nama Frame *" 
                     value={form.namaFrame || ''} 
                     onChange={(e) => setForm({ ...form, namaFrame: e.target.value })}
-                    required
                   />
                 )}
                 {modal.type === 'daun' && (
@@ -675,15 +746,6 @@ export default function Stock({ onLogout }) {
                         <input 
                           type="number" 
                           className="form-control" 
-                          placeholder="P (Panjang)" 
-                          value={form.p || ''} 
-                          onChange={(e) => setForm({ ...form, p: e.target.value })}
-                        />
-                      </div>
-                      <div className="col-6">
-                        <input 
-                          type="number" 
-                          className="form-control" 
                           placeholder="H (Tinggi)" 
                           value={form.h || ''} 
                           onChange={(e) => setForm({ ...form, h: e.target.value })}
@@ -702,7 +764,6 @@ export default function Stock({ onLogout }) {
         </div>
       )}
 
-      {/* Modal Update Stock */}
       {stockModal.show && (
         <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
           <div className="modal-dialog">
@@ -753,13 +814,21 @@ export default function Stock({ onLogout }) {
                   min="1"
                 />
 
-                <label className="form-label">Dikirim Untuk</label>
+                <label className="form-label">
+                  {stockForm.mode === 'subtract' ? 'Dikirim Untuk' : stockForm.mode === 'add' ? 'Dapat Dari' : 'Keterangan'}
+                </label>
                 <input 
                   type="text" 
                   className="form-control mb-3" 
-                //   placeholder="Nama customer, project, atau tujuan"
-                  value={stockForm.dikirimUntuk}
-                  onChange={(e) => setStockForm({ ...stockForm, dikirimUntuk: e.target.value })}
+                  placeholder={
+                    stockForm.mode === 'subtract' 
+                      ? 'Nama customer/project pengiriman' 
+                      : stockForm.mode === 'add'
+                      ? 'Nama supplier/sumber'
+                      : 'Keterangan perubahan stock'
+                  }
+                  value={stockForm.keterangan}
+                  onChange={(e) => setStockForm({ ...stockForm, keterangan: e.target.value })}
                 />
 
                 {stockForm.value && (
@@ -783,7 +852,6 @@ export default function Stock({ onLogout }) {
         </div>
       )}
 
-      {/* Modal History Stock */}
       {historyModal.show && (
         <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
           <div className="modal-dialog modal-lg">
@@ -796,7 +864,6 @@ export default function Stock({ onLogout }) {
                 <button className="btn-close btn-close-white" onClick={closeHistoryModal}></button>
               </div>
               <div className="modal-body">
-                {/* Filter Bulan */}
                 {historyModal.availableMonths && historyModal.availableMonths.length > 0 && (
                   <div className="mb-3">
                     <label className="form-label fw-bold">Filter Bulan</label>
@@ -814,7 +881,6 @@ export default function Stock({ onLogout }) {
                   </div>
                 )}
 
-                {/* Monthly Summary */}
                 {historyModal.selectedMonth && historyModal.history.length > 0 && (
                   <div className="row mb-3">
                     <div className="col-md-4">
@@ -847,7 +913,6 @@ export default function Stock({ onLogout }) {
                   </div>
                 )}
 
-                {/* Current Stock Badge */}
                 <div className="alert alert-secondary">
                   <strong>Stock Saat Ini:</strong> <span className="badge bg-dark fs-6">{historyModal.currentStock}</span>
                 </div>
@@ -869,7 +934,7 @@ export default function Stock({ onLogout }) {
                           <th>Perubahan</th>
                           <th>Stock Baru</th>
                           <th>Mode</th>
-                          <th>Dikirim Untuk</th>
+                          <th>Keterangan</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -900,8 +965,18 @@ export default function Stock({ onLogout }) {
                               </span>
                             </td>
                             <td>
-                              {h.dikirimUntuk ? (
-                                <span className="badge bg-warning text-dark">{h.dikirimUntuk}</span>
+                              {h.keterangan ? (
+                                <div>
+                                  <small className="text-muted d-block">
+                                    {h.keteranganLabel || (h.change < 0 ? 'Dikirim Untuk' : 'Dapat Dari')}:
+                                  </small>
+                                  <span className="badge bg-warning text-dark">{h.keterangan}</span>
+                                </div>
+                              ) : h.dikirimUntuk ? (
+                                <div>
+                                  <small className="text-muted d-block">Dikirim Untuk:</small>
+                                  <span className="badge bg-warning text-dark">{h.dikirimUntuk}</span>
+                                </div>
                               ) : (
                                 <small className="text-muted">-</small>
                               )}
